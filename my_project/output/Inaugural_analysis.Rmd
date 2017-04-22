@@ -1,0 +1,112 @@
+---
+title: "R Notebook"
+output:
+  html_document: default
+  html_notebook: default
+---
+# Does inaugurals become simpler?
+# Step 0: check and install needed packages. Load the libraries and functions. 
+```{r, message=FALSE, warning=FALSE}
+packages.used <- c("rvest", "qdap", 
+                 "gplots", "dplyr",
+                 "ggplots", "RColorBrewer",
+                "RANN", "koRpus")
+
+# check packages that need to be installed.
+packages.needed <- setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
+# load packages
+library("rvest")
+library("qdap")
+library("gplots")
+library("ggplot2")
+library("dplyr")
+library("RColorBrewer")
+library("koRpus")
+```
+
+This notebook was prepared with the following environmental settings.
+```{r}
+print(R.version)
+```
+
+# Step 1: Data harvest: scrap speech URLs from <http://www.presidency.ucsb.edu/>.
+
+Following the example of [Jerid Francom](http://francojc.github.io/web-scraping-with-rvest/),we scrap the links of all inaugural addresses of past presidents.
+
+```{r, message=FALSE, warning=FALSE}
+main.page <- read_html(x = "http://www.presidency.ucsb.edu/inaugurals.php")
+urls <- main.page %>% 
+    html_nodes(".ver12 a") %>% 
+    html_attr("href") 
+  
+links <- main.page %>% 
+    html_nodes(".ver12 a") %>% 
+    html_text() 
+  
+out <- data.frame(links = links, urls = urls, stringsAsFactors = FALSE)
+inaugural <- out[-nrow(out),]
+```
+
+# Step 2: Using speech metadata posted on <http://www.presidency.ucsb.edu/>, we prepared CSV data sets for the speeches we will scrap. 
+```{r}
+inaug.cvs <- read.csv("../Data/inauglist.csv", stringsAsFactors = F)
+addresses <- cbind(inaug.cvs, inaugural)
+```
+
+# Step 3: scrap the texts of speeches from the speech URLs.
+
+We scrap the main text part of the transcript's html page. For simple html pages of this kind,  [Selectorgadget](http://selectorgadget.com/) is very convenient for identifying the html node that `rvest` can use to scrap its content. And we combine the scraped text to the previous CSV data sets.
+```{r}
+addresses$fulltext <- NULL
+for(i in 1:nrow(addresses)){
+  text <- read_html(addresses$urls[i]) %>%
+    html_node(".displaytext") %>%
+    html_text()
+  addresses$fulltext[i] <- text 
+}
+```
+
+#Step 4: data analysis --- length of sentences
+We would like to see how the length of sentences in inaugural changes over the time. In order to measure it, we simply calculate the average length of sentences in each inaugurals.
+```{r,message=FALSE, warning=FALSE}
+addresses$sentences <-NULL
+for(i in 1:nrow(addresses)){
+  sent.len <- sent_detect(addresses$fulltext[i],
+                          endmarks = c("?",".","!","|",";"))
+  addresses$sentences[i] <- length(sent.len)
+}
+pre.names <- as.character(addresses$President)
+ggplot() + 
+  geom_line(mapping = aes(x = c(1:58),
+                          y = addresses$Words/addresses$sentences
+                          ))+
+            labs(title = "Words/Sentences", x = "Presidents", y = "")+
+            scale_x_discrete(labels = pre.names)
+
+```
+
+From the graph above, we observe that the length of sentences gets shorter. 
+
+#Step 5: data analysis --- lexical diversity
+We have already known that the sentences get shorter. What about the lexical diversity? Lexical diversity is a measure of how many different words that are used in a text. In order to measure it, we use [MSTTR](http://www.let.rug.nl/suster/unpublished/wow_complexity.pdf) and follow the steps of [m.eik michalke](https://cran.r-project.org/web/packages/koRpus/vignettes/koRpus_vignette.pdf)
+
+```{r,message=FALSE, warning=FALSE}
+
+tagged.inaug <- list(NULL)
+for(i in 1:nrow(addresses)){
+  tagged.inaug[[i]] <- tokenize(addresses$fulltext[i], format = "obj", lang = "en")
+}
+MSTTR.inaug <- NULL
+for(i in 1:length(tagged.inaug)){
+  MSTTR.inaug[i] <- MSTTR(tagged.inaug[[i]])@MSTTR$MSTTR
+}
+ggplot() + geom_line(mapping = aes(x = c(1:58), y = MSTTR.inaug))+
+  labs(title = "Lixical Richness", x = "Presidents", y = "MSTTR")
+```

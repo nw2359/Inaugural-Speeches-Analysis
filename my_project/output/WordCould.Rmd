@@ -1,0 +1,115 @@
+---
+title: "Untitled"
+author: "Nanjun Wang"
+date: "1/27/2017"
+output: html_document
+---
+#Step0: Install and loading libraries
+```{r, message=FALSE, warning=FALSE}
+
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+library(dplyr)
+library(tidytext)
+library(SnowballC)
+library(ggplot2)
+```
+
+The notebook was prepared with the following envrionment setting:
+```{r}
+print(R.version)
+```
+
+#Step1: Loading Texts
+```{r}
+folder.path <- "/Users/ouminamikun/Desktop/Columbia/Spring 2017/ADS/Basic Text Mining/Data/inaugurals"
+speeches <- list.files(path = folder.path, pattern = "*.txt")
+prex.out <- substr(speeches, 6, nchar(speeches)-4)
+
+ff.all<-Corpus(DirSource(folder.path))
+inspect(ff.all[1])
+```
+
+#Step2: Preprocessing
+For the speeches, I remove extra white space, convert all letters to the lower case, remove [stop words](https://github.com/arc12/Text-Mining-Weak-Signals/wiki/Standard-set-of-english-stopwords), removed empty words due to formatting errors, and remove punctuation. Then we compute the [Document-Term Matrix (DTM)](https://en.wikipedia.org/wiki/Document-term_matrix).  
+
+```{r}
+ff.all<-tm_map(ff.all, stripWhitespace)
+ff.all<-tm_map(ff.all, content_transformer(tolower))
+ff.all<-tm_map(ff.all, removeWords, stopwords("english"))
+ff.all<-tm_map(ff.all, removeWords, character(0))
+ff.all<-tm_map(ff.all, removePunctuation)
+
+dtm <- DocumentTermMatrix(ff.all)
+inspect(dtm[1:10,1:5])
+
+dtm.tidy <- tidy(dtm) #a data.frame
+
+dtm.sum <- summarise(group_by(dtm.tidy, term), sum(count))
+
+```
+#Step3: Word Clouds
+```{r}
+set.seed(142)
+wordcloud(dtm.sum$term, 
+          dtm.sum$`sum(count)`, 
+          min.freq = 1,
+          max.words = 100, 
+          random.order = F,
+          scale = c(5,0.01), 
+          rot.per = 0.3,
+          use.r.layout = T,
+          colors = brewer.pal(6, "Dark2"))
+
+```
+
+#Step4: Compute TF-IDF weighted document-term matrices for individual speeches
+As we would like to identify interesting words for each inaugural speech, we use [TF-IDF](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) to weigh each term within each speech. It highlights terms that are more specific for a particular speech. 
+```{r}
+
+dtm.new <- DocumentTermMatrix(ff.all, 
+                              control = list(weighting = function(x)
+                                             weightTfIdf(x, normalize = F), stopwords = T  ))
+dtm.new.tidy <- tidy(dtm.new)
+```
+#Step5: Interactive visualize key words in each speech
+```{r}
+library(shiny)
+ui <- fluidPage(
+  fluidPage(
+    headerPanel(title = "Inaugural Word Clouds"),
+  
+    sidebarPanel(
+      selectInput(inputId = "speeches", label = "Speeches", 
+              choices = speeches, selected = speeches[5]),
+      sliderInput(inputId = "nwords", label = "Number of words",3,
+              min = 20, max = 200, value = 100, step = 20)
+    ),
+    
+    mainPanel(
+      plotOutput(outputId = "wordclouds", height = "400px")
+    )
+  )
+)
+
+
+server <- function(input, output){
+  
+  Data <- reactive({
+    list(term <- dtm.new.tidy$term[dtm.new.tidy$document == as.character(input$speeches)],
+        count <- dtm.new.tidy$count[dtm.new.tidy$document == as.character(input$speeches)])
+    })
+  output$wordclouds <- renderPlot( {
+    wordcloud(Data()$term, 
+              Data()$count,
+              max.words = input$nwords,
+              min.freq = 1,
+              colors = brewer.pal(6, "Dark2"))
+    }
+  )
+}
+
+shinyApp(ui = ui, server = server)
+
+```
